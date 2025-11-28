@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"library_management/controllers"
-	"library_management/services"
+	"library_management_with_concurrency/controllers"
+	"library_management_with_concurrency/services"
 )
 
 func main() {
