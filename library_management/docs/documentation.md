@@ -1,48 +1,28 @@
-# Library Management System (Go)
+# Library Management System (Concurrent Reservation) - Documentation
 
-## 🧩 Overview
+## Overview
+This project adds concurrent reservation support to the original library management system. It uses Goroutines, Channels, Mutexes, and timers to safely process multiple reservation requests.
 
-This is a simple **console-based Library Management System** implemented in **Go**.  
-It demonstrates the use of structs, interfaces, slices, maps, and methods in Go.
+## Key Concurrency Components
+- **Mutex (sync.Mutex)**: `services.Library` uses a mutex `mu` to protect shared state (books, members, reservations, timers). All state-changing operations obtain the lock to prevent race conditions.
+- **Channels**: `concurrency.ReservationRequest` channel (`reqCh`) is used to queue incoming reservation requests. Worker goroutines read from the channel and process requests concurrently.
+- **Worker Pool (Goroutines)**: The `StartReservationWorkerPool` function spawns a configurable number of worker Goroutines which pull requests from the request channel and call `Library.ReserveBook`.
+- **Timers (`time.Timer`)**: When a reservation is accepted, a `time.Timer` is created (5 seconds). If the member does not borrow the reserved book within 5 seconds, the timer's callback auto-cancels the reservation (cleans up internal state).
+- **Auto-Cancellation**: Timer callbacks obtain the same mutex to safely mutate state. They verify the reservation still matches the expected member before cancellation.
 
----
+## API (CLI)
+- Add Book
+- Remove Book (can't remove when borrowed/reserved)
+- Add Member
+- Borrow Book
+- Return Book
+- List Available Books
+- List Borrowed Books by Member
+- Reserve Book (single)
+- Simulate Concurrent Reservations (creates many requests and processes them via worker pool)
 
-## 📁 Folder Structure
-
-library_management/
-├── main.go
-├── controllers/
-│ └── library_controller.go
-├── models/
-│ ├── book.go
-│ └── member.go
-├── services/
-│ └── library_service.go
-├── docs/
-│ └── documentation.md
-└── go.mod
-
----
-
-## 🏗️ Components Description
-
-| Folder           | Description                                                                    |
-| ---------------- | ------------------------------------------------------------------------------ |
-| **controllers/** | Handles user input/output from the console and calls service layer methods.    |
-| **models/**      | Contains data structures such as `Book` and `Member`.                          |
-| **services/**    | Contains the business logic and the `LibraryManager` interface implementation. |
-| **docs/**        | Documentation files for the project.                                           |
-| **main.go**      | Entry point of the application.                                                |
-
----
-
-## 📘 Features
-
-- Add a new book to the library
-- Remove an existing book
-- Borrow a book (if available)
-- Return a borrowed book
-- List all available books
-- List all borrowed books by a member
-
----
+## How to Run
+1. Ensure Go is installed.
+2. From the project root:
+   ```bash
+   go run ./...
