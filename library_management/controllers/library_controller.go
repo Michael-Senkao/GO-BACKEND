@@ -6,9 +6,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"library_management/models"
 	"library_management/services"
+	"library_management/concurrency"
 )
 
 // Controller wraps service for CLI interactions.
@@ -46,6 +49,10 @@ func (c *Controller) Start() {
 		case "7":
 			c.handleListBorrowedByMember(reader)
 		case "8":
+			c.handleReserveBook(reader)
+		case "9":
+			c.handleSimulateConcurrentReservations(reader)
+		case "10":
 			fmt.Println("Exiting. Goodbye!")
 			return
 		default:
@@ -56,7 +63,7 @@ func (c *Controller) Start() {
 }
 
 func printMenu() {
-	fmt.Println("=== Library Management System ===")
+	fmt.Println("=== Library Management System (Concurrent Reservation) ===")
 	fmt.Println("1) Add Book")
 	fmt.Println("2) Remove Book")
 	fmt.Println("3) Add Member")
@@ -64,7 +71,9 @@ func printMenu() {
 	fmt.Println("5) Return Book")
 	fmt.Println("6) List Available Books")
 	fmt.Println("7) List Borrowed Books by Member")
-	fmt.Println("8) Exit")
+	fmt.Println("8) Reserve Book (single request)")
+	fmt.Println("9) Simulate Concurrent Reservations")
+	fmt.Println("10) Exit")
 }
 
 func (c *Controller) handleAddBook(reader *bufio.Reader) {
@@ -160,6 +169,75 @@ func (c *Controller) handleListBorrowedByMember(reader *bufio.Reader) {
 	}
 }
 
+func (c *Controller) handleReserveBook(reader *bufio.Reader) {
+	fmt.Println("--- Reserve Book ---")
+	bookID := promptInt(reader, "Book ID: ")
+	memberID := promptInt(reader, "Member ID: ")
+	err := c.lib.ReserveBook(bookID, memberID)
+	if err != nil {
+		fmt.Println("Reservation failed:", err)
+	} else {
+		fmt.Println("Reservation successful. You have 5 seconds to borrow the book before auto-cancel.")
+	}
+}
+
+// Simulate many members simultaneously trying to reserve the same (or different) books
+func (c *Controller) handleSimulateConcurrentReservations(reader *bufio.Reader) {
+	fmt.Println("--- Simulate Concurrent Reservations ---")
+	bookID := promptInt(reader, "Book ID to contest: ")
+	fmt.Println("We'll simulate multiple members trying to reserve the same book simultaneously.")
+	count := promptInt(reader, "How many concurrent attempts? (e.g., 5): ")
+	workerCount := promptInt(reader, "How many worker goroutines to process requests? (e.g., 3): ")
+
+	// Create request channel and worker pool
+	reqCh := make(chan concurrency.ReservationRequest)
+	var wg sync.WaitGroup
+	concurrency.StartReservationWorkerPool(c.lib, reqCh, workerCount, &wg)
+
+	// Launch goroutines that send reservation requests nearly simultaneously
+	respChans := make([]chan error, count)
+	for i := 0; i < count; i++ {
+		resp := make(chan error, 1)
+		respChans[i] = resp
+		memberID := 100 + i // create simulated member IDs (100,101,...)
+		// ensure members exist
+		_ = c.lib.AddMember(models.Member{ID: memberID, Name: fmt.Sprintf("SimMember-%d", memberID)})
+		req := concurrency.ReservationRequest{
+			BookID:   bookID,
+			MemberID: memberID,
+			Resp:     resp,
+		}
+		// Send requests in separate goroutines to simulate near-simultaneous arrivals
+		go func(r concurrency.ReservationRequest) {
+			reqCh <- r
+		}(req)
+		// tiny sleep to better simulate near-simultaneous but not perfectly ordered bursts
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Collect responses with a small timeout window
+	for i, ch := range respChans {
+		select {
+		case err := <-ch:
+			if err != nil {
+				fmt.Printf("Simulated Member %d: reservation failed: %v\n", 100+i, err)
+			} else {
+				fmt.Printf("Simulated Member %d: reservation succeeded\n", 100+i)
+			}
+		case <-time.After(2 * time.Second):
+			fmt.Printf("Simulated Member %d: no response (timed out)\n", 100+i)
+		}
+	}
+
+	// close the reqCh and wait for workers to finish processing queued messages
+	close(reqCh)
+	wg.Wait()
+
+	fmt.Println("Simulation complete. Waiting 6 seconds to observe any auto-cancellations (if any).")
+	time.Sleep(6 * time.Second)
+	fmt.Println("Done waiting. Simulation finished.")
+}
+
 // Helper prompts
 func promptString(reader *bufio.Reader, prompt string) string {
 	fmt.Print(prompt)
@@ -180,4 +258,3 @@ func promptInt(reader *bufio.Reader, prompt string) int {
 		return n
 	}
 }
-
